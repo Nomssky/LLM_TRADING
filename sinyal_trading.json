@@ -1,0 +1,134 @@
+[
+  {
+    "Tipe": "SELL LIMIT",
+    "Entry": 104900.0,
+    "SL": 105100.0,
+    "TP": 104400.0,
+    "Probabilitas": 0.7,
+    "Alasan": "Resistance terdekat",
+    "Waktu": "2025-06-07T13:30:10.660172+07:00",
+    "Status": "SL",
+    "Hasil": "SL"
+  },
+  {
+    "Tipe": "BUY LIMIT",
+    "Entry": 104950.0,
+    "SL": 104650.0,
+    "TP": 105400.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Support terdekat",
+    "Waktu": "2025-06-07T13:49:27.386372+07:00",
+    "Status": "TP",
+    "Hasil": "TP"
+  },
+  {
+    "Tipe": "BUY LIMIT",
+    "Entry": 105350.0,
+    "SL": 105050.0,
+    "TP": 106000.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Support terdekat",
+    "Waktu": "2025-06-08T00:33:32.781347+07:00",
+    "Status": "expired",
+    "Hasil": "expired"
+  },
+  {
+    "Tipe": "BUY LIMIT",
+    "Entry": 105500.0,
+    "SL": 105200.0,
+    "TP": 106200.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Support terdekat",
+    "Waktu": "2025-06-08T08:33:42.033367+07:00",
+    "Status": "SL",
+    "Hasil": "SL"
+  },
+  {
+    "Tipe": "BUY LIMIT",
+    "Entry": 105800.0,
+    "SL": 105500.0,
+    "TP": 106500.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Order Block dan zona optimal entry",
+    "Waktu": "2025-06-08T22:30:27.841548+07:00",
+    "Status": "expired",
+    "Hasil": "expired"
+  },
+  {
+    "Tipe": "SELL LIMIT",
+    "Entry": 106350.0,
+    "SL": 106600.0,
+    "TP": 105900.0,
+    "Probabilitas": 0.7,
+    "Alasan": "Resistance terdekat dan potensi CHoCH",
+    "Waktu": "2025-06-09T06:33:21.451757+07:00",
+    "Status": "invalid",
+    "Hasil": "invalid"
+  },
+  {
+    "Tipe": "BUY LIMIT",
+    "Entry": 105850.0,
+    "SL": 105550.0,
+    "TP": 106500.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Order Block dan zona optimal entry",
+    "Waktu": "2025-06-09T06:34:24.133581+07:00",
+    "Status": "SL",
+    "Hasil": "SL"
+  },
+  {
+    "Tipe": "BUY LIMIT",
+    "Entry": 105400.0,
+    "SL": 105100.0,
+    "TP": 106200.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Order Block dan zona optimal entry",
+    "Waktu": "2025-06-09T09:18:40.933146+07:00",
+    "Status": "TP",
+    "Hasil": "TP"
+  },
+  {
+    "Tipe": "BUY LIMIT",
+    "Entry": 107100.0,
+    "SL": 106700.0,
+    "TP": 108000.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Order Block dan zona optimal entry",
+    "Waktu": "2025-06-09T17:25:19.714379+07:00",
+    "Status": "TP",
+    "Hasil": "TP"
+  },
+  {
+    "Tipe": "SELL LIMIT",
+    "Entry": 107900.0,
+    "SL": 108200.0,
+    "TP": 107200.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Break of Structure (BoS) dan zona optimal entry",
+    "Waktu": "2025-06-09T21:52:20.128592+07:00",
+    "Status": "SL",
+    "Hasil": "SL"
+  },
+  {
+    "Tipe": "BUY LIMIT",
+    "Entry": 107800.0,
+    "SL": 107400.0,
+    "TP": 108800.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Order Block dan zona optimal entry",
+    "Waktu": "2025-06-10T00:47:25.950932+07:00",
+    "Status": "expired",
+    "Hasil": "expired"
+  },
+  {
+    "Tipe": "SELL LIMIT",
+    "Entry": 107950.0,
+    "SL": 108250.0,
+    "TP": 107350.0,
+    "Probabilitas": 0.8,
+    "Alasan": "Break of Structure (BoS) dan zona optimal entry",
+    "Waktu": "2025-06-12T22:03:24.955293+07:00",
+    "Status": "invalid",
+    "Hasil": "invalid"
+  }
+]
