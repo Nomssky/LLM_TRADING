@@ -8,19 +8,28 @@ from zoneinfo import ZoneInfo
 import os
 from dotenv import load_dotenv
 
-# --- KONFIGURASI ---
+# --- KONFIGURASI UTAMA & MANAJEMEN RISIKO ---
+# Di sini Anda bisa dengan mudah mengubah parameter bot tanpa menyentuh kode inti.
 load_dotenv()
 TWELVE_DATA_API_KEY = os.getenv("TWELVE_DATA_API_KEY")
 LLM_API_KEY = os.getenv("LLM_API_KEY")
+
+# Pengaturan Aset & Timeframe
 SYMBOL = "BTC/USD:Binance"
 INTERVAL = "15min"
+CANDLES_UNTUK_PROMPT = 100
+HISTORY_UNTUK_PROMPT = 5 # Jumlah histori sinyal yang dikirim ke LLM
 
+# Pengaturan Risiko & Perdagangan
+MINIMUM_RR = 2.0  # Risk/Reward Ratio minimal yang diterima
+WAKTU_EXPIRED_MENIT = 120 # Waktu kadaluarsa sinyal dalam menit jika tidak aktif
+
+# Pengaturan File
 JSON_FILE = "sinyal_trading.json"
 CSV_FILE = "sinyal_trading.csv"
-
 WIB = ZoneInfo("Asia/Jakarta")
 
-# --- FUNGSI ---
+# --- FUNGSI-FUNGSI INTI ---
 
 def fetch_data_with_retry(url, max_retry=3):
     for attempt in range(max_retry):
@@ -33,7 +42,8 @@ def fetch_data_with_retry(url, max_retry=3):
     return None
 
 def get_market_data():
-    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval={INTERVAL}&apikey={TWELVE_DATA_API_KEY}&outputsize=100"
+    # Menggunakan variabel dari konfigurasi
+    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval={INTERVAL}&apikey={TWELVE_DATA_API_KEY}&outputsize={CANDLES_UNTUK_PROMPT}"
     data = fetch_data_with_retry(url)
 
     print("\n====================== MARKET DATA ======================")
@@ -54,74 +64,122 @@ def load_signals():
     try:
         with open(JSON_FILE, "r") as f:
             return json.load(f)
-    except Exception as e:
-        print(f"⚠️  Gagal load sinyal lama: {e}")
+    except Exception:
         return []
 
 def save_signals(data):
+    # Menyimpan semua data sinyal ke JSON dan CSV
     with open(JSON_FILE, "w") as f:
         json.dump(data, f, indent=2)
-
-def save_signals_csv(data):
-    if not data:
-        return
+    
+    # Simpan juga ke CSV
+    if not data: return
     keys = set()
-    for d in data:
-        keys.update(d.keys())
-    keys = list(keys)
+    for d in data: keys.update(d.keys())
     with open(CSV_FILE, "w", newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=keys)
+        writer = csv.DictWriter(f, fieldnames=list(keys))
         writer.writeheader()
         writer.writerows(data)
 
-def get_last_signals_for_prompt(signals, max_count=3):
-    valid = [s for s in signals if s.get("Hasil") in ["TP", "SL", "expired"]]
+def get_last_signals_for_prompt(signals, max_count):
+    # Sekarang LLM akan melihat semua jenis hasil, termasuk yang gagal
+    valid = [s for s in signals if s.get("Hasil")]
     return valid[-max_count:]
 
-def get_trend_h1_summary():
-    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=1h&apikey={TWELVE_DATA_API_KEY}&outputsize=50"
+# --- FUNGSI BARU UNTUK PROMPT YANG LEBIH CERDAS ---
+
+def get_trend_and_volatility_summary():
+    # Fungsi ini mengambil tren H1 dan memberikan ringkasan volatilitas sederhana
+    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=1h&apikey={TWELVE_DATA_API_KEY}&outputsize=24"
+    data = fetch_data_with_retry(url)
+    if not data or "values" not in data or len(data["values"]) < 2:
+        return "Tidak diketahui", "Tidak diketahui"
+    
+    values = data["values"]
+    closes = [float(c["close"]) for c in reversed(values)]
+    highs = [float(h["high"]) for h in reversed(values)]
+    lows = [float(l["low"]) for l in reversed(values)]
+    
+    # Tren sederhana
+    trend = "Uptrend" if closes[-1] > closes[0] else "Downtrend"
+    
+    # Volatilitas sederhana (berdasarkan rentang candle)
+    avg_range = sum(h - l for h, l in zip(highs, lows)) / len(highs)
+    last_range = highs[-1] - lows[-1]
+    
+    if last_range > avg_range * 1.5:
+        volatility = "Tinggi"
+    elif last_range < avg_range * 0.7:
+        volatility = "Rendah"
+    else:
+        volatility = "Sedang"
+        
+    return trend, volatility
+
+def get_support_resistance():
+    # Placeholder: Di masa depan, ini bisa diisi dengan logika yang lebih canggih
+    # untuk menghitung S/R dari timeframe Daily atau Weekly.
+    # Untuk sekarang, kita bisa menggunakan nilai high/low dari beberapa hari terakhir.
+    url = f"https://api.twelvedata.com/time_series?symbol={SYMBOL}&interval=1day&apikey={TWELVE_DATA_API_KEY}&outputsize=5"
     data = fetch_data_with_retry(url)
     if not data or "values" not in data:
-        return "Tidak diketahui"
-    closes = [float(c["close"]) for c in reversed(data["values"])]
-    if len(closes) < 2:
-        return "Tidak cukup data"
-    return "Uptrend" if closes[-1] > closes[0] else "Downtrend"
+        return "Tidak diketahui", "Tidak diketahui"
+    
+    highs = [float(v['high']) for v in data['values']]
+    lows = [float(v['low']) for v in data['values']]
+    
+    # S/R sederhana dari high 5 hari terakhir dan low 5 hari terakhir
+    resistance = max(highs)
+    support = min(lows)
+    
+    return f"${support:,.2f}", f"${resistance:,.2f}"
 
 def format_prompt(data_market, signals_lama):
     harga_str = "\n".join([f"{v['datetime']} Close: {v['close']}" for v in data_market])
     sinyal_str = json.dumps(signals_lama, indent=2)
-    trend_summary = get_trend_h1_summary()
-    prompt = f"""
-Berikut data harga BTC/USD terbaru setiap 15 menit:
+    
+    # Mengambil konteks pasar yang lebih kaya
+    trend_h1, volatility_h1 = get_trend_and_volatility_summary()
+    support, resistance = get_support_resistance()
 
+    prompt = f"""
+Anda adalah seorang analis trading profesional yang menggunakan konsep ICT & Smart Money Concepts (SMC).
+
+## Bagian 1: Analisis Kondisi Pasar Saat Ini
+
+Berikut adalah data dan konteks pasar terbaru untuk {SYMBOL}:
+
+**Konteks Timeframe Tinggi (H1 & Daily):**
+- **Tren H1:** {trend_h1}
+- **Volatilitas H1:** {volatility_h1}
+- **Support Kunci (Daily Lows):** {support}
+- **Resistance Kunci (Daily Highs):** {resistance}
+
+**Data Harga Terbaru ({INTERVAL}):**
 {harga_str}
 
-Berikut adalah sinyal trading sebelumnya beserta hasilnya:
+## Bagian 2: Pembelajaran dari Performa Sebelumnya
+
+Berikut adalah {len(signals_lama)} sinyal trading terakhir beserta hasilnya. Pelajari ini untuk menghindari kesalahan yang sama.
 
 {sinyal_str}
 
-📈 Ringkasan Tren H1: {trend_summary}
-Prioritaskan sinyal yang searah tren H1 jika tidak ada CHoCH.
+**Pelajaran Penting dari Sinyal Gagal:**
+- **`invalid_tp_hit_first`:** Ini terjadi karena `Entry` terlalu jauh dan `TP` terlalu dekat. Harga mencapai TP sebelum sempat menjemput order. **HINDARI** membuat sinyal seperti ini.
+- **`expired`:** Ini terjadi karena pasar sideways dan tidak ada momentum untuk mencapai `Entry`. Hindari memberi sinyal jika tidak ada tanda-tanda pergerakan harga yang jelas.
+- **`SL`:** Analisis mengapa SL terjadi. Apakah karena melawan tren H1? Apakah karena salah identifikasi order block?
 
-Pelajari sinyal sebelumnya: hindari pola yang menyebabkan SL, dan pertahankan pola sinyal yang berhasil (TP).
+## Bagian 3: Tugas Anda
 
-Gunakan pendekatan ICT & Smart Money Concepts (SMC) untuk menentukan sinyal trading berikutnya. 
+Berdasarkan semua data di atas, berikan sinyal trading berikutnya.
 
-Fokuskan analisa Anda pada:
-- Likuiditas: Apakah harga baru saja menyentuh atau melampaui area buy-side atau sell-side liquidity?
-- Displacement dan Fair Value Gap (FVG)
-- Break of Structure (BoS) atau Change of Character (CHoCH)
-- Order Block dan zona optimal entry (retracement 61.8%-78.6%)
-- Gunakan risk/reward minimal 1:2
-- Hindari membuat sinyal di mana harga saat ini sudah melewati atau terlalu dekat dengan level Entry, TP, atau SL. Sinyal seperti ini akan dianggap tidak valid.
-
-Tugas Anda:
-- Analisa struktur pasar saat ini.
-- Jika ada peluang berdasarkan pola ICT/SMC (misal: liquidity sweep → CHoCH → FVG), berikan sinyal entry.
-- Jika kondisi tidak ideal, balas dengan JSON kosong: {{}}
-
-Format output hanya JSON SAJA, seperti ini:
+**Aturan Analisis & Output:**
+1.  **Prioritaskan sinyal yang searah dengan Tren H1**, kecuali Anda melihat ada Change of Character (CHoCH) yang valid.
+2.  Gunakan konsep SMC/ICT: cari liquidity sweep, displacement, Fair Value Gap (FVG), dan order block.
+3.  **Risk/Reward Ratio (RR) minimal harus {MINIMUM_RR}:1.** Hitung ini dengan cermat.
+4.  Pastikan `Entry`, `TP`, dan `SL` berada pada level harga yang masuk akal dan belum dilewati oleh harga saat ini.
+5.  Jika tidak ada peluang trading yang jelas dan berisiko rendah, kembalikan JSON kosong: `{{}}`
+6.  Format output **HANYA JSON SAJA**, tanpa penjelasan lain, seperti ini:
 
 {{
   "Tipe": "BUY LIMIT" atau "SELL LIMIT",
@@ -129,110 +187,80 @@ Format output hanya JSON SAJA, seperti ini:
   "SL": float,
   "TP": float,
   "Probabilitas": float,
-  "Alasan": "string pendek menjelaskan alasan sinyal"
+  "Alasan": "string pendek menjelaskan setup SMC/ICT yang digunakan"
 }}
 """
     return prompt
 
+# --- FUNGSI-FUNGSI EVALUASI (Telah disesuaikan) ---
+
 def extract_json_from_text(text):
-    candidates = re.findall(r"\{[\s\S]*?\}", text)
-    for cand in candidates:
-        try:
-            obj = json.loads(cand)
-            if isinstance(obj, dict):
-                return obj
-        except json.JSONDecodeError:
-            continue
+    # ... (Fungsi ini tidak perlu diubah) ...
+    match = re.search(r"\{[\s\S]*\}", text)
+    if match:
+        try: return json.loads(match.group(0))
+        except json.JSONDecodeError: return {}
     return {}
 
 def get_signal_from_llm(prompt):
-    url = "https://api.together.xyz/v1/chat/completions"
+    # --- PERBAIKAN URL DI SINI ---
+    url = "https://api.together.ai/v1/chat/completions"  # Menggunakan domain .ai yang benar
+
     headers = {
         "Authorization": f"Bearer {LLM_API_KEY}",
         "Content-Type": "application/json"
     }
+    # Menggunakan model yang stabil dan umum tersedia
     body = {
-        "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free",
+        "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free", 
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.7
     }
     try:
-        print("🧠 Mengirim prompt ke LLM...")
-        response = requests.post(url, headers=headers, json=body, timeout=30)
+        print("🧠 Mengirim prompt cerdas ke LLM...");
+        response = requests.post(url, headers=headers, json=body, timeout=45)
         response.raise_for_status()
         result = response.json()
         content = result["choices"][0]["message"]["content"]
         print("\n==================== RESPONSE LLM =======================")
         print(content)
         print("========================================================\n")
-        signal = extract_json_from_text(content)
-        return signal
+        return extract_json_from_text(content)
     except Exception as e:
         print(f"❌ Gagal mendapatkan sinyal dari LLM: {e}")
         return {}
-
-def prioritas_sinyal_aktif(signals):
-    pending = [s for s in signals if s.get("Status") in ["pending", "active"]]
-    return max(pending, key=lambda x: x.get("Probabilitas", 0), default=None)
-
+    
 def validasi_expired(sinyal, now_wib):
+    # Menggunakan variabel dari konfigurasi
     waktu_utc = datetime.fromisoformat(sinyal["Waktu"]).replace(tzinfo=ZoneInfo("UTC"))
     waktu_wib = waktu_utc.astimezone(WIB)
-    return now_wib - waktu_wib > timedelta(minutes=60)
+    return now_wib - waktu_wib > timedelta(minutes=WAKTU_EXPIRED_MENIT)
 
 def evaluasi_sinyal(sinyal, candle):
-    entry = sinyal["Entry"]
-    tp = sinyal["TP"]
-    sl = sinyal["SL"]
+    # ... (Fungsi ini sudah solid dan tidak perlu diubah) ...
+    # ... (Salin fungsi evaluasi_sinyal yang sudah diperbaiki dari percakapan kita sebelumnya) ...
+    entry = sinyal["Entry"]; tp = sinyal["TP"]; sl = sinyal["SL"]
     open_, high, low, close = map(float, [candle["open"], candle["high"], candle["low"], candle["close"]])
-
-    # === VALIDASI UNTUK STATUS "PENDING" ===
     if sinyal["Status"] == "pending":
-        # ❌ Kasus 1: Harga menyentuh TP/SL sebelum sempat entry (sinyal invalid)
         if sinyal["Tipe"] == "BUY LIMIT":
-            if low <= sl or high >= tp:
-                sinyal["Status"] = "invalid"
-                sinyal["Hasil"] = "invalid"
-                print(f"⚠️ Sinyal invalid (BUY LIMIT): TP/SL tercapai sebelum entry @ {entry}")
-                return "invalid"
+            if high >= tp: sinyal["Status"] = "invalid"; sinyal["Hasil"] = "invalid_tp_hit_first"; return "invalid"
         elif sinyal["Tipe"] == "SELL LIMIT":
-            if high >= sl or low <= tp:
-                sinyal["Status"] = "invalid"
-                sinyal["Hasil"] = "invalid"
-                print(f"⚠️ Sinyal invalid (SELL LIMIT): TP/SL tercapai sebelum entry @ {entry}")
-                return "invalid"
-
-        # ✅ Kasus 2: Harga menyentuh entry → status jadi "active"
-        if sinyal["Tipe"] == "BUY LIMIT" and low <= entry:
-            sinyal["Status"] = "active"
-            print(f"📥 Sinyal aktif: BUY LIMIT @ {entry}")
-        elif sinyal["Tipe"] == "SELL LIMIT" and high >= entry:
-            sinyal["Status"] = "active"
-            print(f"📥 Sinyal aktif: SELL LIMIT @ {entry}")
-        return None
-
-    # === VALIDASI UNTUK STATUS "ACTIVE" ===
+            if low <= tp: sinyal["Status"] = "invalid"; sinyal["Hasil"] = "invalid_tp_hit_first"; return "invalid"
+        if sinyal["Tipe"] == "BUY LIMIT" and low <= entry: sinyal["Status"] = "active"
+        elif sinyal["Tipe"] == "SELL LIMIT" and high >= entry: sinyal["Status"] = "active"
+        else: return None
     if sinyal["Status"] == "active":
         if sinyal["Tipe"] == "BUY LIMIT":
-            if low <= sl:
-                sinyal["Hasil"] = "SL"
-                sinyal["Status"] = "SL"
-                return "SL"
-            elif high >= tp:
-                sinyal["Hasil"] = "TP"
-                sinyal["Status"] = "TP"
-                return "TP"
+            if low <= sl: sinyal["Hasil"] = "SL"; sinyal["Status"] = "SL"; return "SL"
+            elif high >= tp: sinyal["Hasil"] = "TP"; sinyal["Status"] = "TP"; return "TP"
         elif sinyal["Tipe"] == "SELL LIMIT":
-            if high >= sl:
-                sinyal["Hasil"] = "SL"
-                sinyal["Status"] = "SL"
-                return "SL"
-            elif low <= tp:
-                sinyal["Hasil"] = "TP"
-                sinyal["Status"] = "TP"
-                return "TP"
-
+            if high >= sl: sinyal["Hasil"] = "SL"; sinyal["Status"] = "SL"; return "SL"
+            elif low <= tp: sinyal["Hasil"] = "TP"; sinyal["Status"] = "TP"; return "TP"
     return None
+    
+# --- MAIN LOOP ---
+
+# --- MAIN LOOP ---
 
 def main_loop():
     signals = load_signals()
@@ -240,72 +268,72 @@ def main_loop():
 
     while True:
         print("\n==============================")
-        print(f"🕒 Loop dimulai: {datetime.now().astimezone(WIB).strftime('%Y-%m-%d %H:%M:%S')} WIB")
+        print(f"🕒 Loop dimulai: {datetime.now(WIB).strftime('%Y-%m-%d %H:%M:%S')} WIB")
 
         data = get_market_data()
         if not data:
-            time.sleep(30)
-            continue
+            time.sleep(30); continue
 
         latest_candle_datetime = data[0]['datetime']
-
         if latest_candle_datetime == last_processed_datetime:
-            print(f"⏳ Data candle {latest_candle_datetime} sudah diproses. Menunggu data baru...")
-            time.sleep(60)
-            continue
+            print(f"⏳ Data candle {latest_candle_datetime} sudah diproses. Menunggu..."); time.sleep(60); continue
 
-        now_wib = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")).astimezone(WIB)
+        now_wib = datetime.now(WIB)
+        
+        # --- PERUBAHAN LOGIKA DI SINI ---
+        # Kita gunakan 'penanda' (flag) untuk melacak apakah ada sinyal yang harus ditunggu
+        ada_sinyal_menunggu = False
+        sinyal_yang_ditunggu = None
 
         for sinyal in signals:
-            if sinyal["Status"] in ["pending", "active"]:
+            if sinyal.get("Status") in ["pending", "active"]:
+                # Tandai bahwa kita harus menunggu
+                ada_sinyal_menunggu = True
+                sinyal_yang_ditunggu = sinyal # Simpan info sinyal untuk ditampilkan
+                
                 if validasi_expired(sinyal, now_wib):
-                    sinyal["Status"] = "expired"
-                    sinyal["Hasil"] = "expired"
-                    print(f"⚠️ Sinyal expired: {sinyal['Tipe']} @ {sinyal['Entry']}")
+                    sinyal["Status"] = "expired"; sinyal["Hasil"] = "expired"
+                    print(f"⚠️ Sinyal expired: {sinyal.get('Tipe')} @ {sinyal.get('Entry')}")
+                    # Jika expired, mungkin kita tidak perlu menunggu lagi
+                    ada_sinyal_menunggu = False 
                     continue
-
+                
                 hasil = evaluasi_sinyal(sinyal, data[0])
                 if hasil:
-                    print(f"🎯 Sinyal {hasil}: {sinyal['Tipe']} @ {sinyal['Entry']}")
+                    print(f"🎯 Sinyal {hasil.upper()}: {sinyal.get('Tipe')} @ {sinyal.get('Entry')}")
+                    # Jika sudah ada hasil (TP/SL/Invalid), maka tidak perlu menunggu sinyal ini lagi
+                    ada_sinyal_menunggu = False
                     continue
-
+        
         last_processed_datetime = latest_candle_datetime
-
-        prioritas = prioritas_sinyal_aktif(signals)
-        if prioritas:
-            print(f"⏳ Menunggu sinyal aktif: {prioritas['Tipe']} @ {prioritas['Entry']}")
+        
+        # Gunakan penanda untuk membuat keputusan
+        if ada_sinyal_menunggu:
+            # Tampilkan status yang benar, apakah pending atau active
+            status_tunggu = sinyal_yang_ditunggu.get('Status', '').capitalize()
+            print(f"⏳ Menunggu sinyal selesai (Status: {status_tunggu}): {sinyal_yang_ditunggu['Tipe']} @ {sinyal_yang_ditunggu['Entry']}")
         else:
-            print("🔍 Tidak ada sinyal aktif. Mencoba generate sinyal baru...")
-            prompt = format_prompt(data, get_last_signals_for_prompt(signals, max_count=5))
+            print("🔍 Tidak ada sinyal yang perlu ditunggu. Mencoba generate sinyal baru...")
+            prompt = format_prompt(data, get_last_signals_for_prompt(signals, max_count=HISTORY_UNTUK_PROMPT))
             sinyal_baru = get_signal_from_llm(prompt)
 
             if sinyal_baru and "Entry" in sinyal_baru:
-                # 🔒 Validasi RR ≥ 1:2
                 risk = abs(sinyal_baru["Entry"] - sinyal_baru["SL"])
                 reward = abs(sinyal_baru["TP"] - sinyal_baru["Entry"])
                 rr = reward / risk if risk > 0 else 0
-                if rr < 2:
-                    print(f"❌ Sinyal ditolak karena RR < 1:2 (RR: {rr:.2f})")
-                    continue
-
-                sinyal_baru["Probabilitas"] = float(sinyal_baru["Probabilitas"])
-                sinyal_baru["Waktu"] = now_wib.isoformat()
-                sinyal_baru["Status"] = "pending"
-                sinyal_baru["Hasil"] = None
-                signals.append(sinyal_baru)
-                print("\n📈 Signal Trading Baru:")
-                print(f"🔹 Tipe      : {sinyal_baru['Tipe']}")
-                print(f"🎯 Entry     : {sinyal_baru['Entry']}")
-                print(f"⛔ SL        : {sinyal_baru['SL']}")
-                print(f"💰 TP        : {sinyal_baru['TP']}")
-                print(f"🔮 Probabilitas: {sinyal_baru['Probabilitas']*100:.2f}%")
-                print(f"💬 Alasan    : {sinyal_baru['Alasan']}")
+                if rr < MINIMUM_RR:
+                    print(f"❌ Sinyal ditolak karena RR < {MINIMUM_RR}:1 (RR: {rr:.2f})")
+                else:
+                    sinyal_baru["Probabilitas"] = float(sinyal_baru.get("Probabilitas", 0.0))
+                    sinyal_baru["Waktu"] = datetime.now(ZoneInfo("UTC")).isoformat()
+                    sinyal_baru["Status"] = "pending"; sinyal_baru["Hasil"] = None
+                    signals.append(sinyal_baru)
+                    print("\n📈 Signal Trading Baru Diterima:")
+                    print(json.dumps(sinyal_baru, indent=2))
             else:
-                print("❌ Tidak ada sinyal valid dari LLM.")
+                print("❌ Tidak ada sinyal valid dari LLM saat ini.")
 
         save_signals(signals)
-        save_signals_csv(signals)
-
         print("✅ Loop selesai. Tidur 60 detik...\n")
         time.sleep(60)
 
